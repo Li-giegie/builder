@@ -1,14 +1,15 @@
-package main
+package internal
 
 import (
 	"errors"
 	"fmt"
+	"github.com/Li-giegie/builder/pkg"
 	"strings"
 	"sync"
 )
 
 type Engine struct {
-	cfg   *Builder
+	Root  *Builder
 	cache sync.Map
 }
 
@@ -17,29 +18,22 @@ func NewEngine(name string) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := &Engine{cfg: cfg}
+	engine := &Engine{Root: cfg}
 	engine.cache.Store(cfg.path, cfg)
 	return engine, nil
 }
 
-func (e *Engine) Execute(args []string) error {
-	var rootCmd string
-	if len(args) == 0 {
-		if e.cfg.DefaultCommand == "" {
-			return errors.New("invalid command")
+func (e *Engine) Execute(commands []string) error {
+	if len(commands) == 0 {
+		if len(e.Root.DefaultCommand) == 0 {
+			return errors.New("empty command")
 		}
-		rootCmd = e.cfg.DefaultCommand
-	} else {
-		rootCmd = args[0]
-		args = args[1:]
+		commands = []string{e.Root.DefaultCommand}
 	}
-	switch rootCmd {
-	case "help":
-		e.cfg.DefaultPrint()
-	default:
-		cmd, ok := e.cfg.Command[rootCmd]
+	for _, command := range commands {
+		cmd, ok := e.Root.Command[command]
 		if !ok {
-			return errors.New(rootCmd + " not found command")
+			return fmt.Errorf("not found command %q", command)
 		}
 		for _, s := range cmd.Shell {
 			if s == "" {
@@ -48,7 +42,7 @@ func (e *Engine) Execute(args []string) error {
 			var execCmds []string
 			// 引用关系
 			if s[0] == '$' {
-				result, err := e.ParseRef(e.cfg, s, nil)
+				result, err := e.ParseRef(e.Root, s, nil)
 				if err != nil {
 					return err
 				}
@@ -57,8 +51,8 @@ func (e *Engine) Execute(args []string) error {
 				execCmds = append(execCmds, s)
 			}
 			for _, item := range execCmds {
-				execCmd := ScanWorld(item)
-				err := Execute(execCmd[0], execCmd[1:])
+				execCmd := pkg.ScanWorld(item)
+				err := pkg.Execute(execCmd[0], execCmd[1:])
 				if err != nil {
 					return err
 				}

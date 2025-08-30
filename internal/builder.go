@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"errors"
@@ -6,7 +6,6 @@ import (
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
-	"sort"
 )
 
 type PathType string
@@ -32,7 +31,7 @@ type Builder struct {
 
 func (b *Builder) GenerateFile(name string, force ...bool) error {
 	_, err := os.Stat(name)
-	if err == nil && len(force) > 0 && force[0] {
+	if !os.IsNotExist(err) && (len(force) < 0 || !force[0]) {
 		return errors.New(name + " file already exists")
 	}
 	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
@@ -41,19 +40,6 @@ func (b *Builder) GenerateFile(name string, force ...bool) error {
 	}
 	defer f.Close()
 	return yaml.NewEncoder(f).Encode(b)
-}
-
-func (b *Builder) DefaultPrint() {
-	keys := make([]string, 0, len(b.Command))
-	for k := range b.Command {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		println(k, "\t", b.Command[k].Desc)
-	}
-	println("help\t", "get help")
-	println("init\t", "Initialize the builder configuration file")
 }
 
 func OpenBuilder(name string) (*Builder, error) {
@@ -71,32 +57,29 @@ func OpenBuilder(name string) (*Builder, error) {
 	return &builder, err
 }
 
-func DefaultBuilder() {
-	Must(func() error {
-		b := &Builder{
-			Version:   "1.0",
-			NameSpace: "default",
-			Import: []struct {
-				Path PathType
-				Name string
-			}{
-				{
-					Path: "./a/b",
-					Name: "utils",
-				},
+func DefaultBuilder(out string, force bool) error {
+	b := &Builder{
+		Version:   "1.0",
+		NameSpace: "default",
+		Import: []struct {
+			Path PathType
+			Name string
+		}{
+			{
+				Path: "{{file path}}",
+				Name: "{{reNamespace}}",
 			},
-			DefaultCommand: "build",
-			Command: map[string]struct {
-				Desc  string
-				Shell []string
-			}{
-				"build": {
-					Desc:  "build command",
-					Shell: []string{"go build -o main.go"},
-				},
+		},
+		DefaultCommand: "hello",
+		Command: map[string]struct {
+			Desc  string
+			Shell []string
+		}{
+			"hello": {
+				Desc:  "hello command",
+				Shell: []string{`echo "hello world"`},
 			},
-		}
-		b.DefaultPrint()
-		return b.GenerateFile(".builder.yaml")
-	})
+		},
+	}
+	return b.GenerateFile(out, force)
 }
