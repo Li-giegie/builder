@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -12,17 +13,6 @@ func Must(f func() error) {
 	if err := f(); err != nil {
 		panic(err)
 	}
-}
-
-func printExit(code int, args ...string) {
-	buf := make([]byte, 0, len(args)*5)
-	for _, arg := range args {
-		buf = append(buf, arg...)
-		buf = append(buf, ' ')
-	}
-	buf = append(buf, '\n')
-	os.Stderr.Write(buf)
-	os.Exit(code)
 }
 
 func Execute(name string, args []string) error {
@@ -85,4 +75,12 @@ func ScanWorld(str string) []string {
 		result = append(result, s)
 	}
 	return result
+}
+
+func PrintObj(a any) {
+	data, err := json.MarshalIndent(a, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	println(string(data))
 }

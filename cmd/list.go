@@ -16,7 +16,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "list builder commands",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		eng, err := internal.NewEngine(filepath.FromSlash(rootCmdFlagCfgName))
+		eng, err := internal.NewEngine(filepath.FromSlash(listCmdFlagCfgName))
 		if err != nil {
 			return err
 		}

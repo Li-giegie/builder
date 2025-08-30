@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"github.com/Li-giegie/builder/pkg"
 	"strings"
-	"sync"
 )
 
 type Engine struct {
 	Root  *Builder
-	cache sync.Map
+	cache map[string]*Builder
 }
 
 func NewEngine(name string) (*Engine, error) {
@@ -19,7 +18,7 @@ func NewEngine(name string) (*Engine, error) {
 		return nil, err
 	}
 	engine := &Engine{Root: cfg}
-	engine.cache.Store(cfg.path, cfg)
+	engine.cache = map[string]*Builder{cfg.path: cfg}
 	return engine, nil
 }
 
@@ -30,90 +29,157 @@ func (e *Engine) Execute(commands []string) error {
 		}
 		commands = []string{e.Root.DefaultCommand}
 	}
+	var execCmds []string
+	var ref = new(refCheck)
 	for _, command := range commands {
 		cmd, ok := e.Root.Command[command]
 		if !ok {
-			return fmt.Errorf("not found command %q", command)
+			return &NotFoundCMdErr{
+				NameSpace: e.Root.NameSpace,
+				Command:   command,
+			}
 		}
 		for _, s := range cmd.Shell {
 			if s == "" {
 				continue
 			}
-			var execCmds []string
 			// 引用关系
 			if s[0] == '$' {
-				result, err := e.ParseRef(e.Root, s, nil)
+				result, err := e.ParseRef(e.Root, command, s[1:], ref)
 				if err != nil {
 					return err
 				}
+				ref.Clear()
 				execCmds = append(execCmds, result...)
 			} else {
 				execCmds = append(execCmds, s)
 			}
-			for _, item := range execCmds {
-				execCmd := pkg.ScanWorld(item)
-				err := pkg.Execute(execCmd[0], execCmd[1:])
-				if err != nil {
-					return err
-				}
-			}
+		}
+	}
+	for _, item := range execCmds {
+		execCmd := pkg.ScanWorld(item)
+		err := pkg.Execute(execCmd[0], execCmd[1:])
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (e *Engine) ParseRef(root *Builder, s string, refPath map[string]map[string]struct{}) ([]string, error) {
-	args := strings.Split(s, ".")
-	if len(args) != 2 || args[0] == "" || args[1] == "" {
-		return nil, fmt.Errorf("syntax error [namespace.command] err: %q", s)
+type SyntaxErr string
+
+func (s SyntaxErr) Error() string {
+	return fmt.Sprintf("syntax error [ command | namespace.command ] err: %q", string(s))
+}
+
+type NotFoundCMdErr struct {
+	NameSpace string
+	Command   string
+}
+
+func (e *NotFoundCMdErr) Error() string {
+	return fmt.Sprintf("namespace %q not found command %q", e.NameSpace, e.Command)
+}
+
+type CycleErr struct {
+	SrcNameSpace string
+	SrcCommand   string
+	DstNameSpace string
+	DstCommand   string
+}
+
+func (e *CycleErr) Error() string {
+	return fmt.Sprintf("namespace: %q\n\tcommand: %q\nnamespace: %q\n\tcommand: %q \ncommand cycle not allowed", e.SrcNameSpace, e.SrcCommand, e.DstNameSpace, e.DstCommand)
+}
+
+func (e *Engine) ParseRef(root *Builder, parentCmd, shell string, ref *refCheck) ([]string, error) {
+	args := strings.SplitN(shell, ".", 2)
+	switch len(args) {
+	case 1:
+		if args[0] == "" {
+			return nil, SyntaxErr(shell)
+		}
+		subCmd := args[0]
+		subCmdObj, ok := root.Command[subCmd]
+		if !ok {
+			return nil, &NotFoundCMdErr{NameSpace: root.NameSpace, Command: subCmd}
+		}
+		if ref.LoadAndStore(root.NameSpace + "." + parentCmd + ":" + root.NameSpace + "." + subCmd) {
+			return nil, &CycleErr{
+				SrcNameSpace: root.NameSpace,
+				SrcCommand:   parentCmd,
+				DstNameSpace: root.NameSpace,
+				DstCommand:   subCmd,
+			}
+		}
+		result := make([]string, 0, len(subCmdObj.Shell))
+		for _, s2 := range subCmdObj.Shell {
+			if s2 == "" {
+				continue
+			}
+			if s2[0] == '$' {
+				ret, err := e.ParseRef(root, subCmd, s2[1:], ref)
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, ret...)
+			} else {
+				result = append(result, s2)
+			}
+		}
+		return result, nil
+	case 2:
+		if args[0] == "" || args[1] == "" {
+			return nil, SyntaxErr(shell)
+		}
+	default:
+		return nil, SyntaxErr(shell)
 	}
 	var (
-		namespace = strings.TrimPrefix(args[0], "$")
+		namespace = args[0]
 		command   = args[1]
 		path      string
 	)
-	for _, s2 := range root.Import {
-		if s2.Name == namespace {
-			path = s2.Path.FromSlash()
+	if namespace == root.NameSpace {
+		path = root.path
+	} else {
+		for _, s2 := range root.Import {
+			if s2.Name == namespace {
+				path = s2.Path.FromSlash()
+			}
 		}
 	}
 	if path == "" {
 		return nil, fmt.Errorf("import %q not found", namespace)
 	}
-	if _, ok := refPath[root.path][path]; ok {
-		return nil, fmt.Errorf("imported packages appear with circular references \n%q\n\t%q", root.path, path)
+	if ref.LoadAndStore(root.NameSpace + "." + parentCmd + ":" + namespace + "." + command) {
+		return nil, &CycleErr{
+			SrcNameSpace: root.NameSpace,
+			SrcCommand:   parentCmd,
+			DstNameSpace: namespace,
+			DstCommand:   command,
+		}
 	}
-	val, ok := e.cache.Load(path)
+	builder, ok := e.cache[path]
 	if !ok {
 		cfg, err := OpenBuilder(path)
 		if err != nil {
 			return nil, err
 		}
-		e.cache.Store(path, cfg)
-		val = cfg
+		e.cache[path] = cfg
+		builder = cfg
 	}
-	if refPath == nil {
-		refPath = make(map[string]map[string]struct{})
-	}
-	refPathItem := refPath[root.path]
-	if refPathItem == nil {
-		refPathItem = make(map[string]struct{})
-		refPath[root.path] = refPathItem
-	}
-	refPathItem[path] = struct{}{}
-
-	builder := val.(*Builder)
 	cmd, ok := builder.Command[command]
 	if !ok {
-		return nil, errors.New("namespace " + namespace + " command" + command + " not found command")
+		return nil, &NotFoundCMdErr{NameSpace: namespace, Command: command}
 	}
 	var result []string
 	for _, s2 := range cmd.Shell {
 		if s2 == "" {
 			continue
 		}
-		if strings.HasPrefix(s2, "$") {
-			res, err := e.ParseRef(builder, s2, refPath)
+		if s2[0] == '$' {
+			res, err := e.ParseRef(builder, command, s2[1:], ref)
 			if err != nil {
 				return nil, err
 			}
@@ -123,4 +189,24 @@ func (e *Engine) ParseRef(root *Builder, s string, refPath map[string]map[string
 		}
 	}
 	return result, nil
+}
+
+type refCheck struct {
+	path map[string]struct{}
+}
+
+func (r *refCheck) LoadAndStore(path string) bool {
+	if r.path == nil {
+		r.path = map[string]struct{}{}
+	}
+	_, pExist := r.path[path]
+	if !pExist {
+		r.path[path] = struct{}{}
+		return false
+	}
+	return true
+}
+
+func (r *refCheck) Clear() {
+	clear(r.path)
 }
