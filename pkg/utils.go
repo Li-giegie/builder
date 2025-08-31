@@ -3,9 +3,11 @@ package pkg
 import (
 	"bytes"
 	"encoding/json"
+	"gopkg.in/yaml.v3"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -83,4 +85,47 @@ func PrintObj(a any) {
 		panic(err)
 	}
 	println(string(data))
+}
+
+func OpenYamlObj(name string, a any) error {
+	f, err := os.Open(filepath.FromSlash(name))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return yaml.NewDecoder(f).Decode(a)
+}
+
+func SaveYamlObj(name string, a any) error {
+	f, err := os.OpenFile(filepath.FromSlash(name), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return yaml.NewEncoder(f).Encode(a)
+}
+
+func MkDir(dir string) error {
+	_, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.MkdirAll(dir, os.ModePerm)
+		}
+		return err
+	}
+	return nil
+}
+
+func IsExist(path string) bool {
+	_, err := os.Stat(path)
+	return !os.IsNotExist(err)
+}
+
+func DefaultStr(s ...string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] != "" {
+			return s[i]
+		}
+	}
+	return ""
 }

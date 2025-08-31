@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/Li-giegie/builder/pkg"
@@ -22,7 +23,7 @@ func NewEngine(name string) (*Engine, error) {
 	return engine, nil
 }
 
-func (e *Engine) Execute(commands []string) error {
+func (e *Engine) Execute(ctx context.Context, commands []string) error {
 	if len(commands) == 0 {
 		if len(e.Root.DefaultCommand) == 0 {
 			return errors.New("empty command")
@@ -45,7 +46,7 @@ func (e *Engine) Execute(commands []string) error {
 			}
 			// 引用关系
 			if s[0] == '$' {
-				result, err := e.ParseRef(e.Root, command, s[1:], ref)
+				result, err := e.ParseRef(ctx, e.Root, command, s[1:], ref)
 				if err != nil {
 					return err
 				}
@@ -69,7 +70,7 @@ func (e *Engine) Execute(commands []string) error {
 type SyntaxErr string
 
 func (s SyntaxErr) Error() string {
-	return fmt.Sprintf("syntax error [ command | namespace.command ] err: %q", string(s))
+	return fmt.Sprintf("syntax error [ $command | $namespace.command ] err: %q", string(s))
 }
 
 type NotFoundCMdErr struct {
@@ -92,7 +93,7 @@ func (e *CycleErr) Error() string {
 	return fmt.Sprintf("namespace: %q\n\tcommand: %q\nnamespace: %q\n\tcommand: %q \ncommand cycle not allowed", e.SrcNameSpace, e.SrcCommand, e.DstNameSpace, e.DstCommand)
 }
 
-func (e *Engine) ParseRef(root *Builder, parentCmd, shell string, ref *refCheck) ([]string, error) {
+func (e *Engine) ParseRef(ctx context.Context, root *Builder, parentCmd, shell string, ref *refCheck) ([]string, error) {
 	args := strings.SplitN(shell, ".", 2)
 	switch len(args) {
 	case 1:
@@ -118,7 +119,7 @@ func (e *Engine) ParseRef(root *Builder, parentCmd, shell string, ref *refCheck)
 				continue
 			}
 			if s2[0] == '$' {
-				ret, err := e.ParseRef(root, subCmd, s2[1:], ref)
+				ret, err := e.ParseRef(ctx, root, subCmd, s2[1:], ref)
 				if err != nil {
 					return nil, err
 				}
@@ -150,7 +151,17 @@ func (e *Engine) ParseRef(root *Builder, parentCmd, shell string, ref *refCheck)
 		}
 	}
 	if path == "" {
-		return nil, fmt.Errorf("import %q not found", namespace)
+		repo := ctx.Value("repo").(*Repo)
+		builder, ok := e.cache[repo.BuilderPath(namespace)]
+		if !ok {
+			var err error
+			builder, err = repo.Find(namespace)
+			if err != nil {
+				return nil, fmt.Errorf("import %q not found %s", namespace, err.Error())
+			}
+		}
+		path = builder.path
+		e.cache[path] = builder
 	}
 	if ref.LoadAndStore(root.NameSpace + "." + parentCmd + ":" + namespace + "." + command) {
 		return nil, &CycleErr{
@@ -179,7 +190,7 @@ func (e *Engine) ParseRef(root *Builder, parentCmd, shell string, ref *refCheck)
 			continue
 		}
 		if s2[0] == '$' {
-			res, err := e.ParseRef(builder, command, s2[1:], ref)
+			res, err := e.ParseRef(ctx, builder, command, s2[1:], ref)
 			if err != nil {
 				return nil, err
 			}
