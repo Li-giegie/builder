@@ -8,6 +8,8 @@ Builder 是一款简化命令行工作流的工具，通过 YAML 配置文件定
 - 默认命令：设置 default_command，支持无参数直接执行预设命令
 
 ## 安装方法
+#### Go install
+go install github.com/Li-giegie/builder@latest
 ### 源码编译（需 Go 1.23+）
 ```shell
 # 克隆仓库
