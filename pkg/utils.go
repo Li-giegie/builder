@@ -19,6 +19,7 @@ func Must(f func() error) {
 
 func Execute(name string, args []string) error {
 	cmd := exec.Command(name, args...)
+	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
